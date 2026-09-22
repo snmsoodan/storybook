@@ -2,6 +2,7 @@
 import type { ReactElement } from 'react';
 import React, { Component, cloneElement } from 'react';
 
+import { isSerializedFunction } from '../../../../../../core/src/shared/args/serialized-functions.ts';
 import { JsonNodeAccordion } from './JsonNodeAccordion';
 import * as dataTypes from './types/dataTypes';
 import * as deltaTypes from './types/deltaTypes';
@@ -934,7 +935,13 @@ export class JsonNode extends Component<JsonNodeProps, JsonNodeState> {
         return (
           <JsonFunctionValue
             name={name}
-            value={data.toString()}
+            // Args in the manager hold a marker where the preview had a function, see
+            // shared/args/serialized-functions.ts.
+            value={
+              isSerializedFunction(data)
+                ? `function ${data.__function__.name}() {}`
+                : data.toString()
+            }
             originalValue={data}
             keyPath={keyPath}
             deep={deep}

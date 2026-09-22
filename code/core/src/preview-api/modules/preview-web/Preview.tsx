@@ -45,6 +45,10 @@ import type {
 
 import { global } from '@storybook/global';
 
+import {
+  deserializeFunctions,
+  serializeFunctions,
+} from '../../../shared/args/serialized-functions.ts';
 import { StoryStore, composeProjectAnnotationsWithCore } from '../../store.ts';
 import { addons } from '../addons/index.ts';
 import type { CsfDocsRender } from './render/CsfDocsRender.ts';
@@ -351,7 +355,10 @@ export class Preview<TRenderer extends Renderer> {
     if (!this.storyStoreValue) {
       throw new CalledPreviewMethodBeforeInitializationError({ methodName: 'onUpdateArgs' });
     }
-    this.storyStoreValue.args.update(storyId, updatedArgs);
+    const currentArgs = this.storyStoreValue.args.get(storyId);
+    // The manager received a marker in place of the functions in the args it sends back, restore
+    // them from the args that are still in the store.
+    this.storyStoreValue.args.update(storyId, deserializeFunctions(updatedArgs, currentArgs));
 
     await Promise.all(
       this.storyRenders
@@ -365,7 +372,9 @@ export class Preview<TRenderer extends Renderer> {
 
     this.channel.emit(STORY_ARGS_UPDATED, {
       storyId,
-      args: this.storyStoreValue.args.get(storyId),
+      // Functions would be dropped by the channel's serializer, replace them with a marker so the
+      // Controls panel can show them.
+      args: serializeFunctions(this.storyStoreValue.args.get(storyId)),
     });
   }
 

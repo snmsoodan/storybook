@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-type-constraint */
+import { isSerializedFunction } from '../../../../../../../core/src/shared/args/serialized-functions.ts';
+
 /**
  * Get Object type.
  *
@@ -13,6 +15,11 @@ export function getObjectType(obj: any) {
     typeof obj[Symbol.iterator] === 'function'
   ) {
     return 'Iterable';
+  }
+  // Args in the manager hold a marker where the preview had a function, see
+  // shared/args/serialized-functions.ts.
+  if (isSerializedFunction(obj)) {
+    return 'Function';
   }
   return Object.prototype.toString.call(obj).slice(8, -1);
 }

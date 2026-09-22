@@ -33,6 +33,8 @@ import { global } from '@storybook/global';
 
 import { toMerged } from 'es-toolkit/object';
 
+import * as telejson from 'telejson';
+
 import { addons } from '../addons/index.ts';
 import type { StoryStore } from '../store/index.ts';
 import { PreviewWeb } from './PreviewWeb.tsx';
@@ -110,6 +112,23 @@ async function createAndRenderPreview({
 
   return preview;
 }
+
+/**
+ * The channel serializes every payload with telejson before the manager receives it, and telejson
+ * drops functions, so this is what the manager actually ends up with.
+ */
+const asReceivedByManager = <T>(payload: T): T => telejson.parse(telejson.stringify(payload)) as T;
+
+const functionArg = { href: '/example', onClick: () => {} };
+
+const functionArgExports = {
+  default: { title: 'Component One' },
+  a: { args: { foo: 'a', one: 1, link: functionArg } },
+};
+
+const importFnWithFunctionArg = vi.fn(async (path: string) =>
+  path === './src/ComponentOne.stories.js' ? functionArgExports : importFn(path)
+);
 
 beforeEach(() => {
   document.location.search = '';
@@ -450,6 +469,25 @@ describe('PreviewWeb', () => {
             one: { name: 'one', type: { name: 'string' }, mapping: { 1: 'mapped-1' } },
           },
           args: { foo: 'a', one: 1 },
+        });
+      });
+
+      it('emits STORY_PREPARED with an object arg that holds a function', async () => {
+        document.location.search = '?id=component-one--a';
+        await createAndRenderPreview({ importFn: importFnWithFunctionArg });
+
+        const payload = mockChannel.emit.mock.calls.find(
+          ([event]) => event === STORY_PREPARED
+        )?.[1];
+
+        // A story arg like `link: { onClick: action('onClick') }` is rendered by the Docs page,
+        // which runs in the preview, but it disappeared in the Controls panel, which runs in the
+        // manager - the function has to be sent as a marker to survive that.
+        expect(asReceivedByManager(payload)).toMatchObject({
+          initialArgs: {
+            link: { href: '/example', onClick: { __function__: { name: 'onClick' } } },
+          },
+          args: { link: { href: '/example', onClick: { __function__: { name: 'onClick' } } } },
         });
       });
 
@@ -1359,6 +1397,54 @@ describe('PreviewWeb', () => {
           await expect(waitForRender).rejects.toThrow();
           expect(projectAnnotations.renderToCanvas).toHaveBeenCalledTimes(1);
         });
+      });
+    });
+
+    describe('functions in args', () => {
+      it('emits STORY_ARGS_UPDATED with a marker where the args hold a function', async () => {
+        document.location.search = '?id=component-one--a';
+        await createAndRenderPreview({ importFn: importFnWithFunctionArg });
+
+        mockChannel.emit.mockClear();
+        emitter.emit(UPDATE_STORY_ARGS, {
+          storyId: 'component-one--a',
+          updatedArgs: { foo: 'b' },
+        });
+
+        await waitForEvents([STORY_ARGS_UPDATED]);
+        expect(
+          asReceivedByManager(
+            mockChannel.emit.mock.calls.find(([event]) => event === STORY_ARGS_UPDATED)?.[1]
+          )
+        ).toMatchObject({
+          storyId: 'component-one--a',
+          args: {
+            foo: 'b',
+            link: { href: '/example', onClick: { __function__: { name: 'onClick' } } },
+          },
+        });
+      });
+
+      it('keeps a function in an object arg that the manager edits', async () => {
+        document.location.search = '?id=component-one--a';
+        const preview = await createAndRenderPreview({ importFn: importFnWithFunctionArg });
+
+        // The manager only ever receives the marker, so that is what it sends back when another
+        // property of the object is edited in the Controls panel.
+        emitter.emit(UPDATE_STORY_ARGS, {
+          storyId: 'component-one--a',
+          updatedArgs: {
+            link: { href: '/changed', onClick: { __function__: { name: 'onClick' } } },
+          },
+        });
+
+        await waitForEvents([STORY_ARGS_UPDATED]);
+        const args =
+          // @ts-expect-error Ignore protected property
+          (preview.storyStoreValue as StoryStore<Renderer>)?.args.get('component-one--a');
+
+        expect(args?.link.href).toBe('/changed');
+        expect(args?.link.onClick).toBe(functionArg.onClick);
       });
     });
   });
